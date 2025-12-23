@@ -1,153 +1,96 @@
-// src/lib/aliyun.ts
-import { SYSTEM_PROMPT, buildUserPrompt } from "@/lib/prompt";
-import { UserInput, InsightResponse, ErrorResponse } from "@/types";
+import { InsightResponse, ErrorResponse, Script } from "@/types";
+import { SYSTEM_PROMPT, constructUserPrompt } from "./prompt";
+import { generateId } from "./utils";
 
-// Placeholder for Aliyun API Key and Model ID
-const ALIYUN_API_KEY = process.env.ALIYUN_API_KEY;
-const ALIYUN_MODEL_ID = process.env.ALIYUN_MODEL_ID || "qwen-max"; // Default from spec
-const ALIYUN_BASE_URL = process.env.ALIYUN_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
+const API_KEY = process.env.ALIYUN_API_KEY;
+const MODEL_ID = process.env.ALIYUN_MODEL_ID || "qwen-max";
+// Using the compatible-mode endpoint for standard OpenAI-like interaction
+const API_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
 
-interface AliyunChatRequest {
-  model: string;
-  input: {
-    messages: Array<{
-      role: "system" | "user";
-      content: string;
-    }>;
-  };
-  parameters?: {
-    result_format: "json";
-    temperature?: number;
-    // Add other parameters as needed based on Aliyun Bailian docs
-  };
-}
-
-interface AliyunChatResponse {
-  output: {
-    text: string; // The raw JSON string from LLM
-    finish_reason: string;
-  };
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-  };
-  request_id: string;
-}
-
-export async function generateInsightsAliyun(
-  userInput: UserInput
-): Promise<InsightResponse | ErrorResponse> {
-  if (!ALIYUN_API_KEY) {
-    console.error("ALIYUN_API_KEY is not set.");
-    return {
-      code: "MISSING_API_KEY",
-      message: "API Key is not configured on the server.",
-      retryable: false,
-    };
+export async function generateInsights(
+  topic: string, 
+  language: "en" | "zh"
+): Promise<InsightResponse> {
+  if (!API_KEY) {
+    throw new Error("Missing ALIYUN_API_KEY");
   }
 
-  const userPrompt = buildUserPrompt(userInput);
-
-  const requestBody: AliyunChatRequest = {
-    model: ALIYUN_MODEL_ID,
-    input: {
-      messages: [
-        {
-          role: "system",
-          content: SYSTEM_PROMPT,
-        },
-        {
-          role: "user",
-          content: userPrompt,
-        },
-      ],
-    },
-    parameters: {
-      result_format: "json", // Enforce JSON output
-      temperature: 0.7, // Example temperature, can be tuned
-    },
-  };
+  const startTime = Date.now();
+  const userPrompt = constructUserPrompt(topic, language);
 
   try {
-    const response = await fetch(`${ALIYUN_BASE_URL}/llm/v1/services/aigc/text-generation/generation`, {
+    const response = await fetch(API_ENDPOINT, {
       method: "POST",
       headers: {
+        "Authorization": `Bearer ${API_KEY}`,
         "Content-Type": "application/json",
-        Authorization: `Bearer ${ALIYUN_API_KEY}`,
-        "X-DashScope-SSE": "enable", // If SSE is needed, otherwise remove
       },
-      body: JSON.stringify(requestBody),
+      body: JSON.stringify({
+        model: MODEL_ID,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: userPrompt },
+        ],
+        response_format: { type: "json_object" }, // Attempt to enforce JSON if supported, otherwise prompt handles it
+      }),
     });
 
     if (!response.ok) {
-      // Handle HTTP errors
-      const errorData = await response.json();
-      console.error("Aliyun API Error:", response.status, errorData);
-
-      // Map common errors
+      const errorData = await response.json().catch(() => ({}));
       if (response.status === 429) {
-        return {
-          code: "RATE_LIMIT_EXCEEDED",
-          message: "访问量过大，请稍后再试。",
-          details: errorData.message || `Aliyun API returned ${response.status}`,
-          retryable: true,
-        };
-      } else if (response.status === 401) {
-        return {
-          code: "INVALID_API_KEY",
-          message: "API Key 无效，请检查配置。",
-          details: errorData.message || `Aliyun API returned ${response.status}`,
-          retryable: false,
-        };
+        throw new Error("RATE_LIMIT_EXCEEDED");
       }
-
-      return {
-        code: "PROVIDER_ERROR",
-        message: "LLM 服务提供商返回错误。",
-        details: errorData.message || `Aliyun API returned ${response.status}`,
-        retryable: true, // Assuming some provider errors might be transient
-      };
+      throw new Error(`Aliyun API Error: ${response.status} ${JSON.stringify(errorData)}`);
     }
 
-    const data: AliyunChatResponse = await response.json();
-    const rawLLMOutput = data.output.text;
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
 
+    if (!content) {
+      throw new Error("Empty response from LLM");
+    }
+
+    // Clean up potential markdown code blocks if the model ignores the system prompt
+    const cleanContent = content.replace(/^```json\n?/, "").replace(/\n?```$/, "");
+    
+    let parsed: any;
     try {
-      // LLM is instructed to output pure JSON, so parse it directly
-      const insights: InsightResponse = JSON.parse(rawLLMOutput);
-
-      // Add meta info from Aliyun response
-      insights.meta = {
-        request_id: data.request_id,
-        latency_ms: 0, // Placeholder, actual latency needs to be calculated
-        model_used: ALIYUN_MODEL_ID,
-        language: userInput.language, // Add requested language to meta
-      };
-
-      // Add IDs to scripts for UI rendering if not provided by LLM (important for React lists)
-      insights.scripts = insights.scripts.map((script, index) => ({
-        ...script,
-        id: script.id || `script_${index + 1}`,
-      }));
-
-
-      return insights;
-    } catch (parseError) {
-      console.error("Failed to parse LLM JSON output:", rawLLMOutput, parseError);
-      return {
-        code: "LLM_PARSE_ERROR",
-        message: "LLM 生成内容格式异常，请重试。",
-        details: `Failed to parse LLM output: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
-        retryable: true,
-      };
+      parsed = JSON.parse(cleanContent);
+    } catch (e) {
+      console.error("JSON Parse Error:", content);
+      throw new Error("INVALID_JSON_FORMAT");
     }
-  } catch (networkError) {
-    console.error("Network or Fetch Error:", networkError);
-    return {
-      code: "NETWORK_ERROR",
-      message: "网络连接失败，请检查您的网络。",
-      details: `Fetch failed: ${networkError instanceof Error ? networkError.message : String(networkError)}`,
-      retryable: true,
+
+    // Validate and fix structure (Basic validation)
+    if (!Array.isArray(parsed.scripts) || parsed.scripts.length === 0) {
+      throw new Error("MISSING_SCRIPTS");
+    }
+
+    // Assign IDs to scripts
+    const scriptsWithIds: Script[] = parsed.scripts.map((s: any, index: number) => ({
+      id: `script_${Date.now()}_${index}`,
+      style: s.style || "Generic",
+      hook: s.hook || "",
+      core_narrative: s.core_narrative || "",
+      cta: s.cta || ""
+    }));
+
+    const result: InsightResponse = {
+      scripts: scriptsWithIds,
+      hashtags: Array.isArray(parsed.hashtags) ? parsed.hashtags : [],
+      music_style: parsed.music_style || "Upbeat trending audio",
+      meta: {
+        request_id: data.id || `req_${Date.now()}`,
+        language,
+        latency_ms: Date.now() - startTime,
+        model_used: MODEL_ID,
+      }
     };
+
+    return result;
+
+  } catch (error: any) {
+    console.error("LLM Generation Error:", error);
+    throw error; // Re-throw to be handled by route
   }
 }

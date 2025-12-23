@@ -1,60 +1,69 @@
-// src/app/api/insights/route.ts
-import { NextResponse } from "next/server";
-import { generateInsightsAliyun } from "@/lib/aliyun";
-import { UserInput, InsightResponse, ErrorResponse } from "@/types";
+import { NextRequest, NextResponse } from "next/server";
+import { generateInsights } from "@/lib/aliyun";
+import { ErrorResponse } from "@/types";
 
-export async function POST(req: Request) {
+export const maxDuration = 60; // Allow longer timeout for LLM
+
+export async function POST(req: NextRequest) {
   try {
-    const userInput: UserInput = await req.json();
+    const body = await req.json();
+    const { topic, language } = body;
 
-    // Basic input validation
-    if (!userInput.topic || userInput.topic.trim().length < 2) {
-      return NextResponse.json<ErrorResponse>(
-        {
-          code: "INVALID_INPUT",
-          message: "主题不能为空且至少包含2个字符。",
-          retryable: false,
-        },
+    // Input Validation
+    if (!topic || typeof topic !== "string" || topic.length < 2) {
+      return NextResponse.json(
+        { 
+          code: "INVALID_INPUT", 
+          message: "Topic must be at least 2 characters long.",
+          retryable: false
+        } as ErrorResponse,
         { status: 400 }
       );
     }
 
-    if (!["en", "zh"].includes(userInput.language)) {
-      return NextResponse.json<ErrorResponse>(
-        {
-          code: "INVALID_INPUT",
-          message: "语言选择无效。",
-          retryable: false,
-        },
+    if (topic.length > 100) {
+       return NextResponse.json(
+        { 
+          code: "INVALID_INPUT", 
+          message: "Topic is too long (max 100 characters).",
+          retryable: false
+        } as ErrorResponse,
         { status: 400 }
       );
     }
 
-    // Call the Aliyun LLM service
-    const result = await generateInsightsAliyun(userInput);
+    const lang = language === "zh" || language === "en" ? language : "zh"; // Default to zh
 
-    if ("code" in result) {
-      // It's an ErrorResponse
-      let status = 500;
-      if (result.code === "INVALID_INPUT") status = 400;
-      if (result.code === "RATE_LIMIT_EXCEEDED") status = 429;
-      if (result.code === "INVALID_API_KEY") status = 401;
+    const insights = await generateInsights(topic, lang);
 
-      return NextResponse.json<ErrorResponse>(result, { status });
-    } else {
-      // It's an InsightResponse
-      return NextResponse.json<InsightResponse>(result, { status: 200 });
-    }
-  } catch (error) {
+    return NextResponse.json(insights);
+
+  } catch (error: any) {
     console.error("API Route Error:", error);
-    return NextResponse.json<ErrorResponse>(
-      {
-        code: "INTERNAL_SERVER_ERROR",
-        message: "服务器内部错误，请稍后再试。",
-        details: error instanceof Error ? error.message : String(error),
-        retryable: true,
-      },
-      { status: 500 }
-    );
+
+    let status = 500;
+    let errorResponse: ErrorResponse = {
+      code: "INTERNAL_SERVER_ERROR",
+      message: "Something went wrong. Please try again.",
+      retryable: true
+    };
+
+    if (error.message === "RATE_LIMIT_EXCEEDED") {
+      status = 429;
+      errorResponse = {
+        code: "RATE_LIMIT_EXCEEDED",
+        message: "Too many requests. Please wait a moment.",
+        retryable: true
+      };
+    } else if (error.message === "INVALID_JSON_FORMAT" || error.message === "MISSING_SCRIPTS") {
+        status = 502; // Bad Gateway (Upstream error)
+        errorResponse = {
+            code: "PROVIDER_ERROR",
+            message: "Failed to generate valid content. Please try again.",
+            retryable: true
+        };
+    }
+
+    return NextResponse.json(errorResponse, { status });
   }
 }
