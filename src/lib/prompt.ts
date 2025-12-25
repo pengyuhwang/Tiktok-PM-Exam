@@ -30,6 +30,8 @@ Task:
 2. Generate 5-10 high-traffic, relevant Hashtags.
 3. Suggest 1 background music style description.
 
+IMPORTANT: All output content MUST be in English, regardless of the topic's language.
+
 Must strictly follow this JSON Schema:
 {
   "scripts": [
@@ -54,6 +56,8 @@ Must strictly follow this JSON Schema:
 1. 生成 3 个独特的 TikTok 脚本结构 (风格包括但不限于: 教育/干货, 叙事/Vlog, 争议/幽默)。
 2. 生成 5-10 个高流量、相关的 Hashtags。
 3. 建议 1 个背景音乐风格描述。
+
+重要：所有输出内容必须使用中文，无论输入的主题是哪种语言。
 
 必须严格遵循的 JSON Schema:
 {

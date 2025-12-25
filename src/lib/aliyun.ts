@@ -100,6 +100,26 @@ export async function generateInsights(
       throw new ServiceError("PROVIDER_ERROR", "LLM response missing scripts array.", 502, true);
     }
 
+    // STRICT VALIDATION: Check for empty fields in any script
+    // If any script is missing key content, we consider the generation a failure 
+    // and trigger a retry rather than showing partial/broken UI.
+    const isComplete = parsed.scripts.every((s: any) => 
+      s.style && s.style.trim() &&
+      s.hook && s.hook.trim() &&
+      s.core_narrative && s.core_narrative.trim() &&
+      s.cta && s.cta.trim()
+    );
+
+    if (!isComplete) {
+      console.warn("Incomplete generation detected:", parsed.scripts);
+      throw new ServiceError(
+        "PROVIDER_ERROR", 
+        "Generated content was incomplete. Please try again.", 
+        502, 
+        true // Retryable
+      );
+    }
+
     // Assign IDs to scripts
     const scriptsWithIds: Script[] = parsed.scripts.map((s: any, index: number) => ({
       id: `script_${Date.now()}_${index}`,

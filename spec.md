@@ -161,6 +161,8 @@ Strictly adhere to the JSON Schema provided in the user prompt.
 2. 生成 5-10 个高流量、相关的 Hashtags。
 3. 建议 1 个背景音乐风格描述。
 
+重要：所有输出内容必须使用中文，无论输入的主题是哪种语言。
+
 必须严格遵循的 JSON Schema:
 {
   "scripts": [
@@ -184,6 +186,8 @@ Task:
 1. Generate 3 unique TikTok script structures (Styles including but not limited to: Educational, Narrative/Vlog, Controversial/Humor).
 2. Generate 5-10 high-traffic, relevant Hashtags.
 3. Suggest 1 background music style description.
+
+IMPORTANT: All output content MUST be in English, regardless of the topic's language.
 
 Must strictly follow this JSON Schema:
 {
@@ -259,6 +263,7 @@ App (布局)
 | 请求限流 | 429 | `RATE_LIMIT_EXCEEDED` | **True** | Banner (Please wait...) + Retry |
 | 网络断开 / 超时 (60s) | 502/504 | `NETWORK_ERROR` | **True** | Banner + Retry Button |
 | 上游服务错误 | 502 | `PROVIDER_ERROR` | **True** | Banner + Retry Button |
+| 生成内容不完整 (字段缺失) | 502 | `PROVIDER_ERROR` | **True** | Banner + Retry Button |
 | 服务端崩溃 / 未知错误 | 5xx | `INTERNAL_SERVER_ERROR` | **True** | Banner + Retry Button |
 
 ### 7.2 加载状态 (Loading State)
@@ -341,11 +346,14 @@ App (布局)
     - 前端根据 `code` 做分类展示（至少区分：鉴权/Key 错、模型配置错、网络错误、限流、超时、服务端异常）。
     - 对可重试错误提供“重试”按钮与更具体提示；未知错误保留兜底文案（但要能定位）。
 
-  12. **输出不完整（LLM 返回字段缺失）与前端兜底**
-    - 识别“脚本卡片不完整”的常见原因：LLM 未返回 hook/core/cta 或返回空字符串。
-    - 服务端对缺失字段做校验/补默认值/返回可识别错误码；前端对缺失字段显示占位与引导重试。
+## 12. 输出不完整 (Incomplete Output) 与 严格校验
+- **问题**: LLM 可能偶尔返回 JSON 结构完整但字段内容为空（例如 `hook: ""`）的情况，导致前端展示空白卡片。
+- **策略**: 
+  - **后端严格校验**: 在 `src/lib/aliyun.ts` 中解析 LLM 响应后，必须遍历检查每个 script 的 `hook`, `core_narrative`, `cta` 是否非空。
+  - **失败处理**: 只要有任意一个关键字段为空，后端应直接抛出 `PROVIDER_ERROR` (Retryable: true)，以此触发前端的全局“重试”按钮，而不是渲染残缺的卡片。
+  - **前端**: 不再需要单独处理字段为空的兜底 UI，因为后端会拦截这种情况。
 
-  13. **复制与 Toast（交互反馈要求之三）**
+## 13. 复制与 Toast（交互反馈要求之三）
     - 单卡复制、复制全部、复制标签、单个 hashtag 点击复制。
     - 所有复制操作统一 Toast 提示（中/英随语言切换）。
 
