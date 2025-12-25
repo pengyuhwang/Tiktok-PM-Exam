@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateInsights } from "@/lib/aliyun";
+import { generateInsights, ServiceError } from "@/lib/aliyun";
 import { ErrorResponse } from "@/types";
 
-export const maxDuration = 60; // Allow longer timeout for LLM
+export const maxDuration = 60; // Match frontend timeout
 
 export async function POST(req: NextRequest) {
   try {
@@ -41,28 +41,25 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     console.error("API Route Error:", error);
 
+    // Default Fallback
     let status = 500;
     let errorResponse: ErrorResponse = {
       code: "INTERNAL_SERVER_ERROR",
       message: "Something went wrong. Please try again.",
-      retryable: true
+      retryable: true,
+      details: error.message
     };
 
-    if (error.message === "RATE_LIMIT_EXCEEDED") {
-      status = 429;
-      errorResponse = {
-        code: "RATE_LIMIT_EXCEEDED",
-        message: "Too many requests. Please wait a moment.",
-        retryable: true
-      };
-    } else if (error.message === "INVALID_JSON_FORMAT" || error.message === "MISSING_SCRIPTS") {
-        status = 502; // Bad Gateway (Upstream error)
+    // Handle Structured ServiceError
+    if (error instanceof ServiceError) {
+        status = error.status;
         errorResponse = {
-            code: "PROVIDER_ERROR",
-            message: "Failed to generate valid content. Please try again.",
-            retryable: true
+            code: error.code,
+            message: error.message,
+            retryable: error.retryable,
+            details: error.message
         };
-    }
+    } 
 
     return NextResponse.json(errorResponse, { status });
   }

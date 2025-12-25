@@ -2,10 +2,14 @@ import type { Config } from 'tailwindcss';
 
 const config: Config = {
   content: [
-    './pages/**/*.{js,ts,jsx,tsx,mdx}',
-    './components/**/*.{js,ts,jsx,tsx,mdx}',
-    './app/**/*.{js,ts,jsx,tsx,mdx}',
-    './src/**/*.{js,ts,jsx,tsx,mdx}', // Ensure all src content is covered
+    './src/**/*.{js,ts,jsx,tsx,mdx}',
+  ],
+  safelist: [
+    'text-red-500',
+    {
+      pattern: /(bg|border|text)-(sky|emerald|violet)-(50|100|200|300|500|700|900)/,
+      variants: ['hover'],
+    },
   ],
   theme: {
     extend: {

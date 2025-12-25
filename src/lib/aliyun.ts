@@ -1,21 +1,41 @@
 import { InsightResponse, ErrorResponse, Script } from "@/types";
-import { SYSTEM_PROMPT, constructUserPrompt } from "./prompt";
+import { getSystemPrompt, constructUserPrompt } from "./prompt";
 import { generateId } from "./utils";
 
 const API_KEY = process.env.ALIYUN_API_KEY;
 const MODEL_ID = process.env.ALIYUN_MODEL_ID || "qwen-max";
-// Using the compatible-mode endpoint for standard OpenAI-like interaction
 const API_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+
+// Custom error class for structured error handling
+export class ServiceError extends Error {
+  code: ErrorResponse['code'];
+  status: number;
+  retryable: boolean;
+
+  constructor(code: ErrorResponse['code'], message: string, status = 500, retryable = true) {
+    super(message);
+    this.code = code;
+    this.status = status;
+    this.retryable = retryable;
+    Object.setPrototypeOf(this, ServiceError.prototype);
+  }
+}
 
 export async function generateInsights(
   topic: string, 
   language: "en" | "zh"
 ): Promise<InsightResponse> {
   if (!API_KEY) {
-    throw new Error("Missing ALIYUN_API_KEY");
+    throw new ServiceError(
+      "PROVIDER_AUTH_ERROR", 
+      "Missing ALIYUN_API_KEY in environment variables.", 
+      500, 
+      false
+    );
   }
 
   const startTime = Date.now();
+  const systemPrompt = getSystemPrompt(language);
   const userPrompt = constructUserPrompt(topic, language);
 
   try {
@@ -28,29 +48,43 @@ export async function generateInsights(
       body: JSON.stringify({
         model: MODEL_ID,
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        response_format: { type: "json_object" }, // Attempt to enforce JSON if supported, otherwise prompt handles it
+        response_format: { type: "json_object" }, 
       }),
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      if (response.status === 429) {
-        throw new Error("RATE_LIMIT_EXCEEDED");
+      const errorBody = await response.json().catch(() => ({}));
+      const errorMsg = JSON.stringify(errorBody);
+      console.error(`[Aliyun API Error] Status: ${response.status}`, errorBody);
+
+      // Strict Error Mapping based on Status Code
+      if (response.status === 401 || response.status === 403) {
+        throw new ServiceError("PROVIDER_AUTH_ERROR", "Invalid API Key or unauthorized access.", 401, false);
       }
-      throw new Error(`Aliyun API Error: ${response.status} ${JSON.stringify(errorData)}`);
+      
+      if (response.status === 429) {
+        throw new ServiceError("RATE_LIMIT_EXCEEDED", "Too many requests. Please wait a moment.", 429, true);
+      }
+
+      if (response.status === 404 || (response.status === 400 && errorMsg.includes("model"))) {
+        throw new ServiceError("PROVIDER_MODEL_NOT_FOUND", `Model '${MODEL_ID}' not found or invalid.`, 400, false);
+      }
+
+      // Default upstream error
+      throw new ServiceError("PROVIDER_ERROR", `Upstream service error: ${response.status}`, 502, true);
     }
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content;
 
     if (!content) {
-      throw new Error("Empty response from LLM");
+      throw new ServiceError("PROVIDER_ERROR", "Empty response from LLM provider.", 502, true);
     }
 
-    // Clean up potential markdown code blocks if the model ignores the system prompt
+    // Clean up potential markdown code blocks
     const cleanContent = content.replace(/^```json\n?/, "").replace(/\n?```$/, "");
     
     let parsed: any;
@@ -58,12 +92,12 @@ export async function generateInsights(
       parsed = JSON.parse(cleanContent);
     } catch (e) {
       console.error("JSON Parse Error:", content);
-      throw new Error("INVALID_JSON_FORMAT");
+      throw new ServiceError("PROVIDER_ERROR", "Failed to parse LLM response.", 502, true);
     }
 
-    // Validate and fix structure (Basic validation)
+    // Validate structure
     if (!Array.isArray(parsed.scripts) || parsed.scripts.length === 0) {
-      throw new Error("MISSING_SCRIPTS");
+      throw new ServiceError("PROVIDER_ERROR", "LLM response missing scripts array.", 502, true);
     }
 
     // Assign IDs to scripts
@@ -90,7 +124,13 @@ export async function generateInsights(
     return result;
 
   } catch (error: any) {
-    console.error("LLM Generation Error:", error);
-    throw error; // Re-throw to be handled by route
+    // If it's already a ServiceError, rethrow it
+    if (error instanceof ServiceError) {
+      throw error;
+    }
+    
+    // Catch-all for network errors or unexpected bugs
+    console.error("Unexpected Logic Error:", error);
+    throw new ServiceError("INTERNAL_SERVER_ERROR", "An internal error occurred.", 500, true);
   }
 }

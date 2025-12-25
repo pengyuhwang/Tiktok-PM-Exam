@@ -10,16 +10,16 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = 'primary', size = 'md', isLoading, children, disabled, ...props }, ref) => {
     const variants = {
-      primary: 'bg-black text-white hover:bg-gray-800 disabled:bg-gray-400',
-      secondary: 'bg-gray-100 text-gray-900 hover:bg-gray-200',
-      outline: 'border border-gray-300 bg-transparent hover:bg-gray-50',
+      primary: 'bg-black text-white hover:bg-gray-800 disabled:bg-gray-400 shadow-sm hover:shadow-md',
+      secondary: 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-100',
+      outline: 'border border-gray-300 bg-transparent hover:bg-gray-50 text-gray-700',
       ghost: 'hover:bg-gray-100 text-gray-600'
     };
 
     const sizes = {
       sm: 'h-8 px-3 text-sm',
-      md: 'h-10 px-4 py-2',
-      lg: 'h-12 px-6 text-lg',
+      md: 'h-10 px-5 py-2.5',
+      lg: 'h-12 px-8 text-lg',
     };
 
     return (
@@ -27,7 +27,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         ref={ref}
         disabled={disabled || isLoading}
         className={cn(
-          'inline-flex items-center justify-center rounded-md font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed',
+          'inline-flex items-center justify-center rounded-lg font-semibold transition-all duration-200 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100',
           variants[variant],
           sizes[size],
           className

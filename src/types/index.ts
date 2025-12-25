@@ -28,8 +28,15 @@ export interface InsightResponse {
 }
 
 export interface ErrorResponse {
-  code: string;
+  code: 
+    | "INVALID_INPUT" 
+    | "NETWORK_ERROR" 
+    | "PROVIDER_AUTH_ERROR" 
+    | "PROVIDER_MODEL_NOT_FOUND" 
+    | "RATE_LIMIT_EXCEEDED" 
+    | "PROVIDER_ERROR" 
+    | "INTERNAL_SERVER_ERROR";
   message: string;
   details?: string;
-  retryable?: boolean;
+  retryable: boolean;
 }
